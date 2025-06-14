@@ -25,7 +25,7 @@ downGSLRates = []
 interRates = []
 intraRate = []
 pause_flag = {'pause': False}
-GTNUM = 2
+GTNUM = 8
 
 
 
@@ -2439,9 +2439,6 @@ class Earth:
                 pause_flag['pause'] = True
                 yield env.timeout(max_delay)  # Pause for a short time to simulate sync delay
                 pause_flag['pause'] = False
-                
-
-
 
     def testFlowConstraint1(self, graph):
         highestDist = (0,0)
@@ -3363,7 +3360,7 @@ if __name__ == '__main__':
 
     # nnpath          = f'./pre_trained_NNs/qNetwork_8GTs.h5'
     filetime = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
-    outputPath      = current_dir + '/Results/Dijkstra_synmode_{}_Fraction_{}_Length_{}_{}/'.format(graph_sync_mode ,float(pd.read_csv("input.csv")['Fraction'][0]),float(pd.read_csv("input.csv")['Test length'][0]), filetime)
+    outputPath      = current_dir + '/Results/Dijkstra_synmode_{}_Fraction_{}_Length_{}_GTnum_{}_{}/'.format(graph_sync_mode ,float(pd.read_csv("input.csv")['Fraction'][0]),float(pd.read_csv("input.csv")['Test length'][0]), GTNUM, filetime)
     os.makedirs(outputPath, exist_ok=True) 
 
     main(outputPath)
