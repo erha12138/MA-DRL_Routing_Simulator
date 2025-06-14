@@ -20,3 +20,7 @@ local_tests
 latRegression.py
 Video/MA-DRL_Movement_Short.mov
 playground.ipynb
+
+/myvenv
+/Results
+/Video

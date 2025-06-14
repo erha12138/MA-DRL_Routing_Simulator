@@ -86,19 +86,19 @@ from collections import deque
 pathings    = ['hop', 'dataRate', 'dataRateOG', 'slant_range', 'Q-Learning', 'Deep Q-Learning']
 pathing     = pathings[5]# dataRateOG is the original datarate. If we want to maximize the datarate we have to use dataRate, which is the inverse of the datarate
 
-FL_Test     = False     # If True, it plots the model divergence the model divergence between agents
+FL_Test     = True     # If True, it plots the model divergence the model divergence between agents
 plotSatID   = True      # If True, plots the ID of each satellite
 plotAllThro = True      # If True, it plots throughput plots for each single path between gateways. If False, it plots a single figure for overall Throughput
 plotAllCon  = True      # If True, it plots congestion maps for each single path between gateways. If False, it plots a single figure for overall congestion
 
-movementTime= 10        # Every movementTime seconds, the satellites positions are updated and the graph is built again
+movementTime= 0.5       # Every movementTime seconds, the satellites positions are updated and the graph is built again
                         # If do not want the constellation to move, set this parameter to a bigger number than the simulation time
-ndeltas     = 5805.44/20#1 Movement speedup factor. Every movementTime sats will move movementTime*ndeltas space. If bigger, will make the rotation distance bigger
+ndeltas     = 5805.44/20 #1 Movement speedup factor. Every movementTime sats will move movementTime*ndeltas space. If bigger, will make the rotation distance bigger
 
 Train       = True      # Global for all scenarios with different number of GTs. if set to false, the model will not train any of them
 explore     = True      # If True, makes random actions eventually, if false only exploitation
 importQVals = False     # imports either QTables or NN from a certain path
-onlinePhase = False     # when set to true, each satellite becomes a different agent. Recommended using this with importQVals=True and explore=False
+onlinePhase = True     # when set to true, each satellite becomes a different agent. Recommended using this with importQVals=True and explore=False
 if onlinePhase:         # Just in case
     explore     = False
     importQVals = True
@@ -111,7 +111,7 @@ w4          = 5         # Normalization for the distance reward, for the travele
 
 gamma       = 0.99       # greedy factor. Smaller -> Greedy. Optimized params: 0.6 for Q-Learning, 0.99 for Deep Q-Learning
 
-GTs = [8]               # number of gateways to be tested
+GTs = [2]               # number of gateways to be tested
 # Gateways are taken from https://www.ksat.no/ground-network-services/the-ksat-global-ground-station-network/ (Except for Malaga and Aalborg)
 # GTs = [i for i in range(2,9)] # This is to make a sweep where scenarios with all the gateways in the range are considered
 
@@ -231,15 +231,16 @@ CurrentGTnumber = -1    # Number of active gateways. This number will be updated
 # nnpathTarget= './pre_trained_NNs/qTarget_8GTs_6secs_nocon.h5'
 # nnpath      = './pre_trained_NNs/qNetwork_3GTs.h5'
 # nnpathTarget= './pre_trained_NNs/qTarget_3GTs.h5'
-nnpath      = './pre_trained_NNs/qNetwork_2GTs.h5'
-nnpathTarget= './pre_trained_NNs/qTarget_2GTs.h5'
-# nnpath      = './pre_trained_NNs/qNetwork_2GTs_lastHop.h5'
-# nnpathTarget= './pre_trained_NNs/qTarget_2GTs_lastHop.h5'
+# nnpath      = './pre_trained_NNs/qNetwork_2GTs.h5'
+# nnpathTarget= './pre_trained_NNs/qTarget_2GTs.h5'
+nnpath      = './pre_trained_NNs/qNetwork_2GTs_lastHop.h5'
+nnpathTarget= './pre_trained_NNs/qTarget_2GTs_lastHop.h5'
 tablesPath  = './pre_trained_NNs/qTablesExport_8GTs/'
 
 if __name__ == '__main__':
     # nnpath          = f'./pre_trained_NNs/qNetwork_8GTs.h5'
-    outputPath      = './Results/{}_{}s_[{}]_Del_[{}]_w1_[{}]_w2_{}_GTs/'.format(pathing, float(pd.read_csv("inputRL.csv")['Test length'][0]), ArriveReward, w1, w2, GTs)
+    filetime = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
+    outputPath      = './Results/{}_{}s_[{}]_Del_[{}]_w1_[{}]_w2_{}_GTs_onlinePhase_{}_{}/'.format(pathing, float(pd.read_csv("inputRL.csv")['Test length'][0]), ArriveReward, w1, w2, GTs, onlinePhase, filetime)
     populationMap   = 'Population Map/gpw_v4_population_count_rev11_2020_15_min.tif'
 
 ###############################################################################
@@ -259,14 +260,14 @@ def getBlockTransmissionStats(timeToSim, GTs, constellationType, earth):
     '''
     General Block transmission stats
     '''
-    allTransmissionTimes = []
-    largestTransmissionTime = (0, None)
-    mostHops = (0, None)
-    queueLat = []
-    txLat = []
-    propLat = []
+    allTransmissionTimes = []    # list of all the transmission times of the blocks
+    largestTransmissionTime = (0, None) # (Transmission time, Block) of the largest transmission time
+    mostHops = (0, None) # (Number of hops, Block) of the block with most hops
+    queueLat = [] # list of all the queue latencies of the blocks
+    txLat = [] # lisr of 
+    propLat = [] 
     # latencies = [queueLat, txLat, propLat]
-    blocks = []
+    blocks = [] # 
     allLatencies= []
     pathBlocks  = [[],[]]
     first       = earth.gateways[0]
@@ -274,7 +275,7 @@ def getBlockTransmissionStats(timeToSim, GTs, constellationType, earth):
 
     earth.pathParam
 
-    for block in receivedDataBlocks:
+    for block in receivedDataBlocks: # 
         time = block.getTotalTransmissionTime()
         hops = len(block.checkPoints)
         blocks.append(BlocksForPickle(block))
@@ -927,6 +928,8 @@ class Satellite:
         # wait for block to fully propagate
         self.tempBlocks.append(block)
 
+        # print(f'{self.env.now}: {self.ID} received block {block.ID} with path {block.path} and propTime {propTime}')
+
         yield self.env.timeout(propTime)
 
         if block.path == -1:
@@ -1083,6 +1086,8 @@ class Satellite:
         while True:
             try:
                 yield sendBuffer[0][0]
+
+                # print(f'Satellite Sending block {sendBuffer[1][0].ID} from satellite {self.ID} to {destination[1].ID} at time {self.env.now}')
 
                 # ANCHOR KPI: queueLatency at sat
                 sendBuffer[1][0].checkPointsSend.append(self.env.now)
@@ -1506,6 +1511,7 @@ class Gateway:
         """
         while True:
             yield self.sendBuffer[0][0]     # event 0 of block 0
+            # print(f'Gatewat Sending block {self.sendBuffer[1][0].ID} from GT {self.name} to {self.sendBuffer[1][0].destination.name}')
 
             # wait until a satellite is linked
             while self.linkedSat[0] is None:
@@ -3652,10 +3658,11 @@ class Earth:
                 plt.gca().add_patch(patch)
 
             # Add legend for congestion color coding
+            ax = plt.gca()
             sm = plt.cm.ScalarMappable(cmap=cmap, norm=norm)
             sm.set_array([])
             ticks = [10] + list(np.linspace(10, 100, num=5))  # Ticks from 10% to 100%
-            plt.colorbar(sm, orientation='vertical', label='Relative Traffic Load (%)', fraction=0.02, pad=0.04, ticks=[int(tick) for tick in ticks]) 
+            plt.colorbar(sm, ax=ax, orientation='vertical', label='Relative Traffic Load (%)', fraction=0.02, pad=0.04, ticks=[int(tick) for tick in ticks]) 
             # plt.colorbar(sm, orientation='vertical', fraction=0.02, pad=0.04, ticks=[int(tick) for tick in ticks]) 
             # plt.colorbar(sm, orientation='vertical', label='Number of packets', fraction=0.02, pad=0.04)
 
@@ -6244,10 +6251,10 @@ def plotSavePathLatencies(outputPath, GTnumber, pathBlocks):
         arrival.append(item[1])
     plt.scatter(arrival, latency, c='r')
     plt.xlabel("Time")
-    plt.ylabel("Latency")
+    plt.ylabel("Latency")               
     os.makedirs(outputPath + '/pngLatencies/', exist_ok=True) # create output path
     plt.savefig(outputPath + '/pngLatencies/' + '{}_gatewaysTime.png'.format(GTnumber))
-    plt.close()
+    plt.close()  
 
     # x axis is the number of the arrival, not the time
     xs = [l for l in range(len(latency))]
@@ -6637,7 +6644,7 @@ def RunSimulation(GTs, inputPath, outputPath, populationData, radioKM):
             random.shuffle(firstLocs)
             locations[:max(GTs)] = firstLocs
             # random.shuffle(locations)
-        inputParams['Locations'] = locations[:GTnumber]
+        inputParams['Locations'] = locations[:GTnumber] # only use the first GTnumber locations
         print('----------------------------------')
         print('Time:')
         print(datetime.now().strftime("%H:%M:%S"))
@@ -6652,6 +6659,9 @@ def RunSimulation(GTs, inputPath, outputPath, populationData, radioKM):
         earth1, _, _, _ = initialize(env, populationData, inputPath + 'Gateways.csv', radioKM, inputParams, movementTime, locations, outputPath, matching=matching)
         earth1.outputPath = outputPath
         
+
+
+# print ISL on Earth
         print('Saving ISLs map...')
         islpath = outputPath + '/ISL_maps/'
         os.makedirs(islpath, exist_ok=True) 
@@ -6659,27 +6669,48 @@ def RunSimulation(GTs, inputPath, outputPath, populationData, radioKM):
         plt.close()
         print('----------------------------------')
 
+
+
+# run the simulation
         progress = env.process(simProgress(simulationTimelimit, env))
         startTime = time.time()
         env.run(simulationTimelimit)
         timeToSim = time.time() - startTime
 
+
+
+
         if testType == "Rates":
             plotRatesFigures()
         else:
+            # save the congestion_test in getBlockTransmissionStats() function
             results, allLatencies, pathBlocks, blocks = getBlockTransmissionStats(timeToSim, inputParams['Locations'], inputParams['Constellation'][0], earth1)
             print(f'DataBlocks lost: {earth1.lostBlocks}')
             
-            # save & plot ftirst 2 GTs path latencies
+
+
+            # save & plot ftirst 2 GTs path latencies 
+            # plot Latency with arrival time and block number of every block 
+            # in /pngLatencies/
             plotSavePathLatencies(outputPath, GTnumber, pathBlocks)
 
+
+
             # Throughput figures
+            # in /Throughput/
             print('Plotting Throughput...')
             plot_packet_latencies_and_uplink_downlink_throughput(blocks, outputPath, bins_num=30, save = True, plot_separately = plotAllThro)
             plot_throughput_cdf(blocks, outputPath, bins_num = 100, save = True, plot_separately = plotAllThro)
             
+
+
+            
             if pathing == "Deep Q-Learning" or pathing == 'Q-Learning':
+
+                # save & plot rewards in /Rewards/
                 save_plot_rewards(outputPath, earth1.rewards, GTnumber)
+
+                
                 if not onlinePhase:
                     eps = earth1.DDQNA.epsilon if pathing == "Deep Q-Learning" else earth1.epsilon
                 else:

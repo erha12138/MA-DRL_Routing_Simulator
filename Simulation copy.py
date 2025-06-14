@@ -24,6 +24,9 @@ upGSLRates = []
 downGSLRates = []
 interRates = []
 intraRate = []
+pause_flag = {'pause': False}
+GTNUM = 2
+
 
 
 def getBlockTransmissionStats(timeToSim, GTs, constellationType):
@@ -36,6 +39,7 @@ def getBlockTransmissionStats(timeToSim, GTs, constellationType):
     queueLat = []
     txLat = []
     propLat = []
+    graphSyncLatency = []
     latencies = [queueLat, txLat, propLat]
     blocks = []
 
@@ -54,6 +58,7 @@ def getBlockTransmissionStats(timeToSim, GTs, constellationType):
         queueLat.append(block.getQueueTime()[0])
         txLat.append(block.txLatency)
         propLat.append(block.propLatency)
+        graphSyncLatency.append(block.getGraphSyncTime()[0])
 
     avgTime = np.mean(allTransmissionTimes)
     totalTime = sum(allTransmissionTimes)
@@ -64,10 +69,11 @@ def getBlockTransmissionStats(timeToSim, GTs, constellationType):
     print(f"A total of {len(receivedDataBlocks)} data blocks were transmitted")
     print(f"A total of {len(createdBlocks) - len(receivedDataBlocks)} data blocks were stuck")
     print(f"Average transmission time for all blocks were {avgTime}")
-    print('Total latecies:\nQueue time: {}%\nTransmission time: {}%\nPropagation time: {}%'.format(
+    print('Total latecies:\nQueue time: {}%\nTransmission time: {}%\nPropagation time: {}%\ngraphSyncLatency time: {}%'.format(
         '%.4f' % float(sum(queueLat)/totalTime*100), 
         '%.4f' % float(sum(txLat)/totalTime*100), 
-        '%.4f' % float(sum(propLat)/totalTime*100)))
+        '%.4f' % float(sum(propLat)/totalTime*100),
+        '%.4f' % float(sum(graphSyncLatency)/totalTime*100)))
 
     results = Results(finishedBlocks=blocks,
                       constellation=constellationType,
@@ -76,9 +82,11 @@ def getBlockTransmissionStats(timeToSim, GTs, constellationType):
                       meanQueueLatency=np.mean(queueLat),
                       meanPropLatency=np.mean(propLat),
                       meanTransLatency=np.mean(txLat),
+                      meangraphSyncLatency=np.mean(graphSyncLatency),
                       perQueueLatency = sum(queueLat)/totalTime*100,
                       perPropLatency = sum(propLat)/totalTime*100,
-                      perTransLatency = sum(txLat)/totalTime*100)
+                      perTransLatency = sum(txLat)/totalTime*100,
+                      perGraphSyncLatency = sum(graphSyncLatency)/totalTime*100)
 
     return results
 
@@ -108,14 +116,14 @@ Te  = 86164.28450576939 # Time required by Earth for 1 rotation
 Vc  = 299792458         # Speed of light [m/s]
 k   = 1.38e-23          # Boltzmann's constant
 eff = 0.55              # Efficiency of the parabolic antenna
-
+graph_sync_mode = "centralized" # "flood" or "centralized" - how the global graph is synchronized between satellites
 ###############################################################################
 ###############################     Classes    ################################
 ###############################################################################
 
 
 class Results:
-    def __init__(self, finishedBlocks, constellation, GTs, meanTotalLatency, meanQueueLatency, meanTransLatency, meanPropLatency, perQueueLatency, perPropLatency,perTransLatency):
+    def __init__(self, finishedBlocks, constellation, GTs, meanTotalLatency, meanQueueLatency, meanTransLatency, meanPropLatency, meangraphSyncLatency, perQueueLatency, perPropLatency, perTransLatency, perGraphSyncLatency):
 
         self.GTs = GTs
         self.finishedBlocks = finishedBlocks
@@ -124,9 +132,11 @@ class Results:
         self.meanQueueLatency = meanQueueLatency
         self.meanPropLatency = meanPropLatency
         self.meanTransLatency = meanTransLatency
+        self.meangraphSyncLatency = meangraphSyncLatency
         self.perQueueLatency = perQueueLatency
         self.perPropLatency = perPropLatency
         self.perTransLatency = perTransLatency
+        self.perGraphSyncLatency = perGraphSyncLatency
 
 
 class BlocksForPickle:
@@ -142,6 +152,7 @@ class BlocksForPickle:
         self.queueLatency = block.queueLatency  # total time acumulated in the queues
         self.txLatency = block.txLatency  # total transmission time
         self.propLatency = block.propLatency  # total propagation latency
+        self.graphSyncLatency = block.graphSyncLatency  # total graph sync latency
         self.totLatency = block.totLatency  # total latency
 
 
@@ -310,6 +321,11 @@ class Satellite:
         self.sendBlocksSatsInter = []
         self.newBuffer = [False]
 
+        self.graphSyncLatency = 0  # s
+        self.now_graphSyncLatency = 0 # now
+
+
+
     def maxSlantRange(self):
         """
         Maximum distance from satellite to edge of coverage area is calculated using the following formula:
@@ -365,6 +381,14 @@ class Satellite:
         Adds the propagation time to the block attribute
         """
         # wait for block to fully propagate
+
+        # record_time = self.env.now
+        # while pause_flag['pause'] == True:
+        #     yield self.env.timeout(0.01)
+
+        # time_span = self.env.now - record_time
+        # block.graphSyncLatency += time_span
+
         self.tempBlocks.append(block)
 
         yield self.env.timeout(propTime)
@@ -477,11 +501,19 @@ class Satellite:
             sendBuffer = self.sendBufferGT
 
         while True:
+                # print(self.env.now)
+            
             try:
                 yield sendBuffer[0][0]
-
+                
                 # ANCHOR KPI: queueLatency at sat
                 sendBuffer[1][0].checkPointsSend.append(self.env.now)
+
+                while pause_flag['pause'] == True:
+                    yield self.env.timeout(0.01)
+                
+                # ANCHOR KPI: queueLatency at sat
+                sendBuffer[1][0].checkSync.append(self.env.now)
 
                 if isSat:
                     timeToSend = sendBuffer[1][0].size / destination[2]
@@ -624,6 +656,8 @@ class Satellite:
         else:
             self.longitude = 0
 
+
+
     def getLinkLatencies(self, graph):
 
         latencies = []
@@ -688,16 +722,32 @@ class DataBlock:
         self.timeAtFull = None  # the simulation time at which the block was full and was ready to be sent.
         self.creationTime = creationTime  # the simulation time at which the block was created.
         self.timeAtFirstTransmission = None  # the simulation time at which the block left the GT.
+        self.checkSyncforGT = None
         self.checkPoints = []   # list of simulation reception times at node with the first entry being the reception time at first sat - can be expanded to include the sat IDs at each checkpoint
+        self.checkSync = []     # list of simulation times when the graph was synchronized at each node
         self.checkPointsSend = []   # list of times after the block was sent at each node
         self.path = []
         self.queueLatency = (None, None) # total time acumulated in the queues
         self.txLatency = 0      # total transmission time
         self.propLatency = 0    # total propagation latency
+
+        self.graphSyncLatency = 0 # total latency due to graph sync
+
         self.totLatency = 0     # total latency
         self.isNewPath = False
         self.oldPath = []
         self.newPath = []
+
+    def getGraphSyncTime(self):
+        graphSyncTime = [0, []]
+        graphSyncTime[0] += self.checkSyncforGT - self.timeAtFirstTransmission
+        graphSyncTime[1].append(self.checkSyncforGT - self.timeAtFirstTransmission)
+        for Sync, preSend in zip(self.checkSync, self.checkPointsSend):
+            graphSyncTime[0] += Sync - preSend
+            graphSyncTime[1].append(Sync - preSend)
+        
+        return graphSyncTime
+        
 
     def getQueueTime(self):
         '''
@@ -706,7 +756,7 @@ class DataBlock:
         Rest of the steps: sum(checkpoint (Arrival time at node) - checkpointsSend (send time at previous node))
         '''
         queueLatency = [0, []]
-        queueLatency[0] += self.timeAtFirstTransmission - self.creationTime        # ANCHOR first step
+        queueLatency[0] += self.timeAtFirstTransmission - self.creationTime        # fill delay
         queueLatency[1].append(self.timeAtFirstTransmission - self.creationTime)
         for arrived, sendReady in zip(self.checkPoints, self.checkPointsSend):  # rest of the steps
             queueLatency[0] += sendReady - arrived
@@ -720,12 +770,13 @@ class DataBlock:
         if len(self.checkPoints) == 1:
             return self.checkPoints[0] - self.timeAtFirstTransmission
 
-        lastTime = self.creationTime
-        for time in self.checkPoints:
-            totalTime += time - lastTime
-            lastTime = time
-        # ANCHOR KPI: totLatency
-        self.totLatency = totalTime 
+        # lastTime = self.creationTime
+        # for time in self.checkPoints:
+        #     totalTime += time - lastTime
+        #     lastTime = time
+        # # ANCHOR KPI: totLatency
+        # self.totLatency = totalTime
+        totalTime = self.checkPoints[-1] - self.creationTime
         return totalTime
 
     def __repr__(self):
@@ -882,7 +933,18 @@ class Gateway:
         """
         blockSize = 64800
         while True:
+            
             yield self.sendBuffer[0][0]     # event 0 of block 0
+            
+            self.sendBuffer[1][0].timeAtFirstTransmission = self.env.now  # Block is sent
+            
+            # record_time = self.env.now
+            while pause_flag['pause'] == True:
+                yield self.env.timeout(0.01)
+
+            self.sendBuffer[1][0].checkSyncforGT = self.env.now  # record the time when the graph was synchronized
+            
+
 
             # wait until a satellite is linked
             while self.linkedSat[0] is None:
@@ -892,7 +954,7 @@ class Gateway:
             propTime = self.timeToSend(self.linkedSat) # distance / c
             timeToSend = blockSize/self.dataRate
 
-            self.sendBuffer[1][0].timeAtFirstTransmission = self.env.now  # Block is sent
+
             yield self.env.timeout(timeToSend)
             # ANCHOR KPI: txLatency send block from GT
             self.sendBuffer[1][0].txLatency += timeToSend 
@@ -945,6 +1007,9 @@ class Gateway:
         delay, otherwise the send-buffer might be overfilled.
         """
         # wait for block to fully propagate
+        # while pause_flag['pause'] == True:
+        #     yield self.env.timeout(0.01)
+
         yield self.env.timeout(propTime)
         # ANCHOR KPI: propLatency send block from GT
         block.propLatency += propTime
@@ -2328,6 +2393,56 @@ class Earth:
 
             self.updateGTPaths()
 
+            # ------------------------------
+            # Sync Mode 1: Flooding Sync
+            # ------------------------------
+            if graph_sync_mode == "flood":
+                from collections import deque
+
+                # 初始化 BFS 队列和到达时间表
+                arrival_times = {}
+                queue = deque()
+
+                seed_sat = self.LEO[0].sats[0]
+                arrival_times[seed_sat.ID] = 0
+                queue.append((seed_sat, 0))
+
+                while queue:
+                    current_sat, current_time = queue.popleft()
+                    for neighbor in current_sat.intraSats + current_sat.interSats:
+                        if neighbor[1].ID not in arrival_times:
+                            delay = neighbor[0] / Vc
+                            arrival_time = current_time + delay
+                            arrival_times[neighbor[1].ID] = arrival_time
+                            queue.append((neighbor[1], arrival_time))
+                        
+                max_delay = max(arrival_times.values())
+
+                pause_flag['pause'] = True
+                yield env.timeout(max_delay)  # Pause for a short time to simulate sync delay
+                pause_flag['pause'] = False
+
+            # ------------------------------
+            # Sync Mode 2: Centralized GEO Sync
+            # ------------------------------
+            elif graph_sync_mode == "centralized":
+                geo_pos = np.array([0, 0, Re + 35786e3])  # GEO over equator
+
+                max_delay = 0
+                for plane in self.LEO:
+                    for sat in plane.sats:
+                        sat_pos = np.array([sat.x, sat.y, sat.z])
+                        dist = np.linalg.norm(sat_pos - geo_pos)
+                        delay = 2 * dist / Vc
+                        max_delay = max(max_delay, delay)
+
+                pause_flag['pause'] = True
+                yield env.timeout(max_delay)  # Pause for a short time to simulate sync delay
+                pause_flag['pause'] = False
+                
+
+
+
     def testFlowConstraint1(self, graph):
         highestDist = (0,0)
         for GT in self.gateways:
@@ -3095,7 +3210,7 @@ def main(outputPath):
     # movement time should be in the order of 10's of hours when the test type is "Rates".
     # If the test is not 'Rates', the movement time is still kept large to avoid the constellation moving
     # movementTime = 10 * 3600
-    movementTime = 0.5 # 5 minutes to change constellation position
+    movementTime = 5 # 5 minutes to change constellation position
 
     savePath1 = outputPath + "/latency Test/{} {}s/".format(pathing, int(testLength))
 
@@ -3121,7 +3236,7 @@ def main(outputPath):
         simulationTimelimit = testLength
 
     # for GTnumber in range(2, 19):
-    for GTnumber in range(2, 3):
+    for GTnumber in range(GTNUM, GTNUM+1):
         env = simpy.Environment()
 
         inputParams['Locations'] = locations[:GTnumber]
@@ -3248,7 +3363,7 @@ if __name__ == '__main__':
 
     # nnpath          = f'./pre_trained_NNs/qNetwork_8GTs.h5'
     filetime = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
-    outputPath      = current_dir + '/Results/Dijkstra_{}_{}/'.format(float(pd.read_csv("inputRL.csv")['Test length'][0]), filetime)
+    outputPath      = current_dir + '/Results/Dijkstra_synmode_{}_Fraction_{}_Length_{}_{}/'.format(graph_sync_mode ,float(pd.read_csv("input.csv")['Fraction'][0]),float(pd.read_csv("input.csv")['Test length'][0]), filetime)
     os.makedirs(outputPath, exist_ok=True) 
 
     main(outputPath)
